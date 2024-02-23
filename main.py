@@ -8,42 +8,93 @@ from telegram.ext import (filters, ApplicationBuilder, ContextTypes,
                           InlineQueryHandler)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+import finder
+import recognizer
+import downloader
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO)
 
-# reads your token from environment variables
-TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = "6613464857:AAESmaQn5x2gUF7Non5Re0475zKbpe80Coo"
 
 
-# the function that runs when /start is sent to the bot
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_started(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await context.bot.send_message(chat_id,
-                                   """Hi I'm a telegram bot template! """)
+                                   """send a Spotify link or send the name of the song - singer""")
 
 
-# the function that recieves text messages from users
-async def recieve_message(update: Update, context):
-    if update.effective_chat.type != 'private':  # there's the inline mode for groups
+async def on_message_recieved(update: Update, context):
+
+    if update.effective_chat.type != 'private':  # don't read group messages
         return
-    await update.message.reply_text(
-        text='say something??',
-        reply_to_message_id=update.message.message_id,
-        parse_mode="HTML")
+    
+    message = update.message
+    
+    # check if it's sent using @spotifybot
+    if hasattr(message.via_bot, 'full_name') and message.via_bot.full_name == "Spotify":
+        message = finder.process_input(message.reply_markup.inline_keyboard[0][0]['url'])
+    else:
+        message = finder.process_input(message.text)
+    
+    if isinstance(message, tuple):
+        song, singer = message
+        id = finder.get_song_id(song, singer)
+        meta_data = finder.find_meta_data(id)
+        photo = downloader.download_cover_photo(meta_data['cover_art_url'])
+        caption = f"<b>{meta_data['title']}</b> - <i>{meta_data['artist']}</i> \nreleased {meta_data['year']}\n{meta_data['album']}"
+        button = [[InlineKeyboardButton("Download", callback_data=id)]]
+        await context.bot.send_photo(update.effective_chat.id, photo, caption, reply_markup= InlineKeyboardMarkup(button), parse_mode='HTML')
+        return
+
+    if isinstance(message, list):
+        buttons = [[InlineKeyboardButton(title, callback_data=id)] for title, id in message]
+        if buttons:
+            await update.message.reply_text(
+                text= "search results",
+                reply_to_message_id=update.message.message_id,
+                reply_markup= InlineKeyboardMarkup(buttons),
+                parse_mode="HTML")
+            return
+        await update.message.reply_text(
+                text= "Nothing Found",
+                reply_to_message_id=update.message.message_id)
+    
+    # if the recieved message is a youtube music link
+    await context.bot.send_message(update.effective_chat.id, "downloading...")
+    song = downloader.download_song(message)
+    await context.bot.send_message(update.effective_chat.id, song)
 
 
-# recieves the keyboard button clicks
-async def get_keyboad_reply(update: Update, context, optional_pram=None):
+async def on_keyboard_button_pressed(update: Update, context, optional_pram=None):
+
     chat_id = update.effective_chat.id
     message = update.callback_query.data
+    await context.bot.send_message(chat_id, "downloading...")
+    song = downloader.download_song(message)
+    await context.bot.send_message(chat_id, song)
 
 
-# recieves voice messages
-async def get_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_voice_recieved(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     audio_file = await context.bot.get_file(update.message.voice.file_id)
     await audio_file.download_to_drive(update.message.voice.file_id + '.ogg')
     await context.bot.send_message(update.effective_chat.id, 'listening...')
+    try:
+
+        with open(update.message.voice.file_id + '.ogg', mode='rb') as excerpt_data:
+            song, singer = recognizer.recognize_API(excerpt_data.read())
+            if song:
+                id = finder.get_song_id(song, singer)
+                result = downloader.download_song(id)
+                await context.bot.send_message(update.effective_chat.id, result)
+            else:
+                await context.bot.send_message(update.effective_chat.id, 'No Match Found')
+            os.remove(update.message.voice.file_id + '.ogg')
+    
+    except Exception as exception:
+        logging.error(exception)
 
 
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60,17 +111,17 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.inline_query.answer(results)
 
 
+
 if __name__ == '__main__':
+    
     application = ApplicationBuilder().token(TOKEN).build()
-    application.add_handler(
-        CallbackQueryHandler(get_keyboad_reply, block=False))
-    application.add_handler(
-        CommandHandler(['start', 'help'], start, block=False))
-    application.add_handler(
-        MessageHandler(filters.TEXT & (~filters.COMMAND),
-                       recieve_message,
+    
+    application.add_handler(CallbackQueryHandler(on_keyboard_button_pressed, block=False))
+    application.add_handler(CommandHandler(['start', 'help'], on_started, block=False))
+    application.add_handler(MessageHandler(filters.TEXT | filters.AUDIO & (~filters.COMMAND),
+                       on_message_recieved,
                        block=False))
-    application.add_handler(MessageHandler(filters.VOICE, get_voice))
+    application.add_handler(MessageHandler(filters.VOICE, on_voice_recieved))
     application.add_handler(InlineQueryHandler(inline_query))
 
     application.run_polling()

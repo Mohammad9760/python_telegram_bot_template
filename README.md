@@ -1,13 +1,11 @@
-# Telegram Bot Template
-template for creating bots with PTB version 20.4+ <br>
-https://docs.python-telegram-bot.org/en/stable/ <br>
+# Music Downloader Telegram Bot
+Spotify downloader <br>
+Find Music and Download it
 
 ## Usage
-```bash
-pip install python-telegram-bot
-```
-<br> then add your bot token to TELEGRAM_TOKEN in the environment variables or secret 
+send the name of the song to search for it and download it.
 
 ## Features
-added handlers for Start command, Text messages, Voice messages, Inline button reply <br>
-
+finds songs from ~10 seconds of voice sample <br>
+downloads songs from Spotify links <br>
+adds meta data to the song file (attatched lyrics...) <br>
